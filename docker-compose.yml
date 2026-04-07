@@ -1,0 +1,117 @@
+# =============================================================================
+# Financial Knowledge Assistant - Docker Compose
+# =============================================================================
+# 
+# Usage:
+#   docker-compose up -d              # Start all services
+#   docker-compose up -d streamlit    # Start only Streamlit
+#   docker-compose logs -f            # View logs
+#   docker-compose down               # Stop all services
+#
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Streamlit UI
+  # ===========================================================================
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: financial-assistant-ui
+    ports:
+      - "8501:8501"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - CHROMA_PERSIST_DIR=/app/data/chroma_db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: ["streamlit", "run", "ui/streamlit_app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ===========================================================================
+  # FastAPI Backend
+  # ===========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: financial-assistant-api
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - CHROMA_PERSIST_DIR=/app/data/chroma_db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: ["uvicorn", "app.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ===========================================================================
+  # Development Service (both UI and API)
+  # ===========================================================================
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: financial-assistant-dev
+    ports:
+      - "8501:8501"
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - CHROMA_PERSIST_DIR=/app/data/chroma_db
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: >
+      sh -c "
+        uvicorn app.api.routes:app --host 0.0.0.0 --port 8000 --reload &
+        streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0 --server.runOnSave true
+      "
+    restart: unless-stopped
+    profiles:
+      - dev
+    networks:
+      - app-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  app-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes (optional - for persistent storage across container recreates)
+# =============================================================================
+volumes:
+  chroma_data:
+    driver: local
